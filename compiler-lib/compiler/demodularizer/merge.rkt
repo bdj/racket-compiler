@@ -75,14 +75,11 @@
   (match mv
     [(struct module-variable (modidx sym pos phase constantness))
      (match rw
-       [(struct modvar-rewrite (self-modidx provide->toplevel))
+       [(struct modvar-rewrite (self-modidx provide->toplevel toplevel-rewriter-box))
         (log-debug (format "Rewriting ~a@~a of ~S" sym pos (mpi->path* modidx)))
         (define tl (provide->toplevel sym pos))
         (log-debug (format "Rewriting ~a@~a of ~S to ~S" sym pos (mpi->path* modidx) tl))
-        (match-define (toplevel-offset-rewriter rewrite-fun meta)
-          (hash-ref MODULE-TOPLEVEL-OFFSETS self-modidx
-                    (lambda ()
-                      (error 'compute-new-modvar "toplevel offset not yet computed: ~S" self-modidx))))
+        (match-define (toplevel-offset-rewriter rewrite-fun meta) (unbox toplevel-rewriter-box))
         (log-debug (format "Rewriting ~a@~a of ~S (which is ~a) with ~S" sym pos (mpi->path* modidx) tl meta))
         (define res (rewrite-fun tl))
         (log-debug (format "Rewriting ~a@~a of ~S (which is ~a) with ~S and got ~S"
@@ -167,10 +164,14 @@
        (struct-copy prefix mod-prefix
                     [toplevels new-mod-toplevels]))
      (define offset-meta (vector name srcname self-modidx))
+     (define rw 
+       (hash-ref MODULE->RW mod-form 
+                 (lambda () 
+                   (error 'merge-module "missing module rewriter for module"))))
      (log-debug "Setting toplevel offsets rewriter for ~S and it is currently ~S"
                 offset-meta
-                (hash-ref MODULE-TOPLEVEL-OFFSETS self-modidx #f))
-     (hash-set! MODULE-TOPLEVEL-OFFSETS self-modidx
+                (unbox (modvar-rewrite-toplevel-rewriter-box rw)))
+     (set-box! (modvar-rewrite-toplevel-rewriter-box rw) 
                 (toplevel-offset-rewriter
                  (lambda (n)
                    (log-debug "Finding offset ~a in ~S of ~S" n toplevel-remap offset-meta)

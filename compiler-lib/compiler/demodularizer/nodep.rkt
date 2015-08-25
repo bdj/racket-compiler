@@ -13,6 +13,7 @@
 (define ZOS (make-parameter #f))
 (define MODULE-IDX-MAP (make-parameter #f))
 (define PHASE*MODULE-CACHE (make-parameter #f))
+(define MODULE->RW (make-hasheq))
 
 (define (nodep-file file-to-batch)
   (define idx-map (make-hash))
@@ -64,7 +65,7 @@
      (get-nodep-module-code/path pth phase)]))
 
 (define-struct @phase (phase code))
-(define-struct modvar-rewrite (modidx provide->toplevel))
+(define-struct modvar-rewrite (modidx provide->toplevel toplevel-rewriter-box))
 (define-struct module-code (modvar-rewrite lang-info ctop))
 (define @phase-ctop (compose module-code-ctop @phase-code))
 
@@ -159,15 +160,22 @@
                (prefix-toplevels new-prefix))
      (define mvs (filter module-variable? (prefix-toplevels new-prefix)))
      (log-debug (format "[~S] module-variables: ~S - ~S" name (length mvs) mvs))
-     (values (make-modvar-rewrite self-modidx (construct-provide->toplevel new-prefix provides))
+     (define rw 
+       (make-modvar-rewrite self-modidx 
+                            (construct-provide->toplevel new-prefix provides) 
+                            (box #f)))
+     (define m 
+       (make-mod name srcname self-modidx
+                 new-prefix provides requires body empty
+                 unexported max-let-depth dummy lang-info internal-context #hash()
+                 empty empty empty))
+     (hash-set! MODULE->RW m rw)
+     (values rw
              lang-info
              (append (requires->modlist requires phase)
                      (if (and phase (zero? phase))
                          (begin (log-debug (format "[~S] lang-info : ~S" name lang-info)) ; XXX Seems to always be #f now
-                                (list (make-mod name srcname self-modidx
-                                                new-prefix provides requires body empty
-                                                unexported max-let-depth dummy lang-info internal-context #hash()
-                                                empty empty empty)))
+                                (list m))
                          (begin (log-debug (format "[~S] Dropping module @ ~S" name phase))
                                 empty))))]              
     [else (error 'nodep-module "huh?: ~e" mod-form)]))
@@ -215,14 +223,16 @@
      (extract-modules (@phase-ctop ct))]
     [else
      (error 'extract-modules "Unknown extraction: ~S" ct)]))
-
+; make better contracts for MODULE->RW and toplevel-rewriter-box
 (define get-modvar-rewrite/c 
   (module-path-index? . -> . (or/c symbol? modvar-rewrite? module-path-index?)))
 (provide/contract
  [struct modvar-rewrite 
          ([modidx module-path-index?]
-          [provide->toplevel (symbol? exact-nonnegative-integer? . -> . exact-nonnegative-integer?)])]
+          [provide->toplevel (symbol? exact-nonnegative-integer? . -> . exact-nonnegative-integer?)]
+          [toplevel-rewriter-box (box/c any/c)])]
  [get-modvar-rewrite/c contract?]
+ [MODULE->RW hash?]
  [current-excluded-modules (parameter/c generic-set?)]
  [nodep-file (-> path-string?
                  (values compilation-top? lang-info/c module-path-index? get-modvar-rewrite/c))])
