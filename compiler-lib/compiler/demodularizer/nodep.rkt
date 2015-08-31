@@ -96,7 +96,7 @@
                  (and (pair? pth) (cddr pth))))
               pth
               phase)))
-         (when (and phase (zero? phase))
+         (when (and phase (<= phase 0))
            (hash-set! (MODULE-IDX-MAP) pth modvar-rewrite))
          (make-@phase 
           phase
@@ -150,7 +150,21 @@
                        unexported max-let-depth dummy lang-info
                        internal-context binding-names
                        flags pre-submodules post-submodules))
-     (define new-prefix prefix)
+     (define-values (prefix* body*)
+       (cond
+         [(or (not phase) (zero? phase))
+          (values prefix body)]
+         [else
+           (define syntax-body (assoc (- phase) syntax-bodies))
+           (cond 
+             [(and syntax-body (seq-for-syntax? (second syntax-body)))
+               (match-define (seq-for-syntax syntax-forms syntax-prefix syntax-max-let-depth syntax-dummy) 
+                 (second syntax-body))
+               (log-debug "[~S] syntax-body: ~s" name syntax-body)
+               (values syntax-prefix syntax-forms)]
+             [else 
+               (values prefix body)])]))
+     (define new-prefix prefix*)
      ;; Cache all the mpi paths
      (for-each (match-lambda
                  [(and mv (struct module-variable (modidx sym pos phase constantness)))
@@ -159,6 +173,8 @@
                   (void)])
                (prefix-toplevels new-prefix))
      (define mvs (filter module-variable? (prefix-toplevels new-prefix)))
+     (local-require racket/pretty)
+     (log-debug "[~S] mod-form: ~a" name (pretty-format mod-form))
      (log-debug (format "[~S] module-variables: ~S - ~S" name (length mvs) mvs))
      (define rw 
        (make-modvar-rewrite self-modidx 
@@ -166,15 +182,15 @@
                             (box #f)))
      (define m 
        (make-mod name srcname self-modidx
-                 new-prefix provides requires body empty
+                 new-prefix provides requires body* empty
                  unexported max-let-depth dummy lang-info internal-context #hash()
                  empty empty empty))
      (hash-set! MODULE->RW m rw)
      (values rw
              lang-info
              (append (requires->modlist requires phase)
-                     (if (and phase (zero? phase))
-                         (begin (log-debug (format "[~S] lang-info : ~S" name lang-info)) ; XXX Seems to always be #f now
+                     (if (and phase (<= phase 0))
+                         (begin (log-debug (format "[~S] lang-info : ~S @ ~S" name lang-info phase)) ; XXX Seems to always be #f now
                                 (list m))
                          (begin (log-debug (format "[~S] Dropping module @ ~S" name phase))
                                 empty))))]              
