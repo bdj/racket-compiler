@@ -20,11 +20,11 @@
   (parameterize ([ZOS (make-hash)]
                  [MODULE-IDX-MAP idx-map]
                  [PHASE*MODULE-CACHE (make-hasheq)])
-    (define (get-modvar-rewrite modidx)
+    (define (get-modvar-rewrite modidx phase)
       (define pth (mpi->path* modidx))
-      (hash-ref idx-map pth
+      (hash-ref idx-map (cons pth phase)
                 (lambda ()
-                  (error 'get-modvar-rewrite "Cannot locate modvar rewrite for ~S" pth))))
+                  (error 'get-modvar-rewrite "Cannot locate modvar rewrite for ~S@~S" pth phase))))
     (match (get-nodep-module-code/path file-to-batch 0)
       [(struct @phase (_ (struct module-code (modvar-rewrite lang-info ctop))))
        (values ctop lang-info (modvar-rewrite-modidx modvar-rewrite) get-modvar-rewrite)])))
@@ -52,14 +52,16 @@
   (and (path? pth)
        (set-member? (current-excluded-modules) (path->string pth))))
 
+(define (neg-phase p) (and p (- p)))
+
 (define (get-nodep-module-code/index mpi phase)
   (define pth (mpi->path! mpi))
   (cond
     [(symbol? pth)
-     (hash-set! (MODULE-IDX-MAP) pth pth)
+     (hash-set! (MODULE-IDX-MAP) (cons pth (neg-phase phase)) pth)
      pth]
     [(excluded? pth)
-     (hash-set! (MODULE-IDX-MAP) pth mpi)
+     (hash-set! (MODULE-IDX-MAP) (cons pth (neg-phase phase)) mpi)
      mpi]
     [else
      (get-nodep-module-code/path pth phase)]))
@@ -97,7 +99,7 @@
               pth
               phase)))
          (when (and phase (<= phase 0))
-           (hash-set! (MODULE-IDX-MAP) pth modvar-rewrite))
+           (hash-set! (MODULE-IDX-MAP) (cons pth (neg-phase phase)) modvar-rewrite))
          (make-@phase 
           phase
           (make-module-code modvar-rewrite lang-info ctop))))))
@@ -127,7 +129,7 @@
 
 ; XXX interning is hack to fix test/add04.ss and provide/contract renaming
 (define (intern s) (string->symbol (symbol->string s)))
-(define (construct-provide->toplevel prefix provides)
+(define (construct-provide->toplevel prefix phase)
   (define provide-ht (make-hasheq))
   (for ([tl (prefix-toplevels prefix)]
         [i (in-naturals)])
@@ -139,7 +141,7 @@
     (define res
       (hash-ref provide-ht isym
               (lambda ()
-                (error 'provide->toplevel "Cannot find ~S in ~S" sym prefix))))
+                (error 'provide->toplevel "Cannot find ~S in ~S@~S" sym prefix phase))))
     (log-debug (format "Looked up ~S@~a and got ~v" sym pos res))
     res))
 
@@ -150,10 +152,10 @@
                        unexported max-let-depth dummy lang-info
                        internal-context binding-names
                        flags pre-submodules post-submodules))
-     (define-values (prefix* body*)
+     (define-values (prefix* body* max-let-depth* dummy*)
        (cond
          [(or (not phase) (zero? phase))
-          (values prefix body)]
+          (values prefix body max-let-depth dummy)]
          [else
            (define syntax-body (assoc (- phase) syntax-bodies))
            (cond 
@@ -161,9 +163,12 @@
                (match-define (seq-for-syntax syntax-forms syntax-prefix syntax-max-let-depth syntax-dummy) 
                  (second syntax-body))
                (log-debug "[~S] syntax-body: ~s" name syntax-body)
-               (values syntax-prefix syntax-forms)]
+               (values syntax-prefix 
+                       syntax-forms 
+                       syntax-max-let-depth 
+                       (or syntax-dummy dummy))]
              [else 
-               (values prefix body)])]))
+               (values prefix body max-let-depth dummy)])]))
      (define new-prefix prefix*)
      ;; Cache all the mpi paths
      (for-each (match-lambda
@@ -173,17 +178,15 @@
                   (void)])
                (prefix-toplevels new-prefix))
      (define mvs (filter module-variable? (prefix-toplevels new-prefix)))
-     (local-require racket/pretty)
-     (log-debug "[~S] mod-form: ~a" name (pretty-format mod-form))
      (log-debug (format "[~S] module-variables: ~S - ~S" name (length mvs) mvs))
      (define rw 
        (make-modvar-rewrite self-modidx 
-                            (construct-provide->toplevel new-prefix provides) 
+                            (construct-provide->toplevel new-prefix phase) 
                             (box #f)))
      (define m 
        (make-mod name srcname self-modidx
                  new-prefix provides requires body* empty
-                 unexported max-let-depth dummy lang-info internal-context #hash()
+                 unexported max-let-depth* dummy* lang-info internal-context #hash()
                  empty empty empty))
      (hash-set! MODULE->RW m rw)
      (values rw
@@ -241,7 +244,7 @@
      (error 'extract-modules "Unknown extraction: ~S" ct)]))
 ; make better contracts for MODULE->RW and toplevel-rewriter-box
 (define get-modvar-rewrite/c 
-  (module-path-index? . -> . (or/c symbol? modvar-rewrite? module-path-index?)))
+  (module-path-index? exact-integer? . -> . (or/c symbol? modvar-rewrite? module-path-index?)))
 (provide/contract
  [struct modvar-rewrite 
          ([modidx module-path-index?]

@@ -98,14 +98,9 @@
                          name idx tl))
       (match tl
         [(and mv (struct module-variable (modidx sym pos phase constantness)))
-         (define rw ((current-get-modvar-rewrite) modidx))
+         (define rw ((current-get-modvar-rewrite) modidx phase))
          ;; XXX We probably don't need to deal with #f phase
          (cond
-           #;[(not (or (not phase) (<= phase 0)))
-            (log-debug "[~S] Dropping tl ~s@~s, phase was ~s" name tl idx phase)
-            (values i
-                    new-toplevels 
-                    (list* #f remap))]
            ; Primitive module like #%paramz
            [(symbol? rw)
             (log-debug (format "~S from ~S" sym rw))
