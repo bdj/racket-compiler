@@ -6,6 +6,7 @@
          compiler/zo-parse
          "util.rkt"
          "mpi.rkt"
+         "update-toplevels.rkt"
          racket/set)
 
 (define current-excluded-modules (make-parameter (set)))
@@ -141,9 +142,35 @@
     (define res
       (hash-ref provide-ht isym
               (lambda ()
-                (error 'provide->toplevel "Cannot find ~S in ~S@~S" sym prefix phase))))
+                (error 'provide->toplevel "Cannot find ~S in ~S@~S" sym prefix (neg-phase phase)))))
     (log-debug (format "Looked up ~S@~a and got ~v" sym pos res))
     res))
+
+(define (merge-prefix root-prefix mod-prefix)
+  (cond
+    [root-prefix
+      (match-define (struct prefix (root-num-lifts root-toplevels root-stxs root-src-insp-desc)) root-prefix)
+      (match-define (struct prefix (mod-num-lifts mod-toplevels mod-stxs src-insp-desc)) mod-prefix)
+      (make-prefix (+ root-num-lifts mod-num-lifts)
+                   (append root-toplevels mod-toplevels)
+                   (append root-stxs mod-stxs)
+                   root-src-insp-desc)]
+    [else mod-prefix]))
+(define (nodep-syntax-bodies syntax-bodies)
+  (define-values (prefix forms max-let-depth toplevel-offset)
+    (for/fold ([prefix #f]
+               [forms empty]
+               [max-let-depth -1]
+               [toplevel-offset 0])
+              ([body syntax-bodies]
+               #:when (seq-for-syntax? body))
+      (match-define (seq-for-syntax s-forms s-prefix s-max-let-depth s-dummy) body)
+      (define update (update-toplevels (lambda (n) (+ n toplevel-offset)) (lambda (n) n) 0))
+      (values (merge-prefix prefix s-prefix)
+              (append forms (map update s-forms))
+              (max max-let-depth s-max-let-depth)
+              (+ toplevel-offset (length (prefix-toplevels s-prefix))))))
+  (values prefix forms max-let-depth))
 
 (define (nodep-module mod-form phase)
   (match mod-form
@@ -152,23 +179,17 @@
                        unexported max-let-depth dummy lang-info
                        internal-context binding-names
                        flags pre-submodules post-submodules))
-     (define-values (prefix* body* max-let-depth* dummy*)
+     (define-values (prefix* body* max-let-depth*)
        (cond
          [(or (not phase) (zero? phase))
-          (values prefix body max-let-depth dummy)]
+          (values prefix body max-let-depth)]
          [else
-           (define syntax-body (assoc (- phase) syntax-bodies))
+           (define syntax-bodies@phase (assoc (- phase) syntax-bodies))
            (cond 
-             [(and syntax-body (seq-for-syntax? (second syntax-body)))
-               (match-define (seq-for-syntax syntax-forms syntax-prefix syntax-max-let-depth syntax-dummy) 
-                 (second syntax-body))
-               (log-debug "[~S] syntax-body: ~s" name syntax-body)
-               (values syntax-prefix 
-                       syntax-forms 
-                       syntax-max-let-depth 
-                       (or syntax-dummy dummy))]
+             [syntax-bodies@phase 
+               (nodep-syntax-bodies syntax-bodies@phase)]
              [else 
-               (values prefix body max-let-depth dummy)])]))
+               (values prefix body max-let-depth)])]))
      (define new-prefix prefix*)
      ;; Cache all the mpi paths
      (for-each (match-lambda
@@ -186,7 +207,7 @@
      (define m 
        (make-mod name srcname self-modidx
                  new-prefix provides requires body* empty
-                 unexported max-let-depth* dummy* lang-info internal-context #hash()
+                 unexported max-let-depth* dummy lang-info internal-context #hash()
                  empty empty empty))
      (hash-set! MODULE->RW m rw)
      (values rw
