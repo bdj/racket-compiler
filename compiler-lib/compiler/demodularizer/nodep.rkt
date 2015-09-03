@@ -157,20 +157,33 @@
                    root-src-insp-desc)]
     [else mod-prefix]))
 (define (nodep-syntax-bodies syntax-bodies)
-  (define-values (prefix forms max-let-depth toplevel-offset)
+  (define-values (prefix forms max-let-depth toplevel-offset lift-offset)
     (for/fold ([prefix #f]
-               [forms empty]
+               [forms (lambda (prefix) empty)]
                [max-let-depth -1]
-               [toplevel-offset 0])
+               [toplevel-offset 0]
+               [lift-offset 0])
               ([body syntax-bodies]
                #:when (seq-for-syntax? body))
       (match-define (seq-for-syntax s-forms s-prefix s-max-let-depth s-dummy) body)
-      (define update (update-toplevels (lambda (n) (+ n toplevel-offset)) (lambda (n) n) 0))
       (values (merge-prefix prefix s-prefix)
-              (append forms (map update s-forms))
+              (lambda (final-prefix)
+                (define update 
+                  (update-toplevels 
+                    (lambda (n) 
+                      (define lift-start (prefix-lift-start s-prefix))
+                      (cond 
+                        [(>= n lift-start)
+                         (define final-lift-start (prefix-lift-start final-prefix))
+                         (+ (- lift-start n) final-lift-start lift-offset)]
+                        [else (+ n toplevel-offset)])) 
+                    (lambda (n) n) 0))
+                (append (forms final-prefix) (map update s-forms)))
               (max max-let-depth s-max-let-depth)
-              (+ toplevel-offset (length (prefix-toplevels s-prefix))))))
-  (values prefix forms max-let-depth))
+              (+ toplevel-offset (length (prefix-toplevels s-prefix)))
+              (+ lift-offset (prefix-num-lifts s-prefix)))))
+  (log-debug "syntax-bodies: ~a" syntax-bodies)
+  (values prefix (forms prefix) max-let-depth))
 
 (define (nodep-module mod-form phase)
   (match mod-form
