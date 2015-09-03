@@ -151,11 +151,25 @@
     [root-prefix
       (match-define (struct prefix (root-num-lifts root-toplevels root-stxs root-src-insp-desc)) root-prefix)
       (match-define (struct prefix (mod-num-lifts mod-toplevels mod-stxs src-insp-desc)) mod-prefix)
-      (make-prefix (+ root-num-lifts mod-num-lifts)
-                   (append root-toplevels mod-toplevels)
+
+      (define combined-toplevels 
+        (append root-toplevels (filter (lambda (x) (not (member x root-toplevels))) mod-toplevels)))
+      
+      (define rewriter 
+        (for/vector ([mod-t (in-list mod-toplevels)])
+          (for/first ([i (in-naturals)]
+                      [c-t (in-list combined-toplevels)]
+                      #:when (eq? mod-t c-t))
+                     i)))
+      (log-debug "rewriter: ~a" rewriter)
+
+      (values (make-prefix (+ root-num-lifts mod-num-lifts)
+                   combined-toplevels
                    (append root-stxs mod-stxs)
-                   root-src-insp-desc)]
-    [else mod-prefix]))
+                   root-src-insp-desc)
+              rewriter)]
+    [else (values mod-prefix (build-vector (length (prefix-toplevels mod-prefix)) values))]))
+
 (define (nodep-syntax-bodies syntax-bodies)
   (define-values (prefix forms max-let-depth toplevel-offset lift-offset)
     (for/fold ([prefix #f]
@@ -166,7 +180,8 @@
               ([body syntax-bodies]
                #:when (seq-for-syntax? body))
       (match-define (seq-for-syntax s-forms s-prefix s-max-let-depth s-dummy) body)
-      (values (merge-prefix prefix s-prefix)
+      (define-values (merged-prefix rewriter) (merge-prefix prefix s-prefix))
+      (values merged-prefix 
               (lambda (final-prefix)
                 (define update 
                   (update-toplevels 
@@ -175,14 +190,15 @@
                       (cond 
                         [(>= n lift-start)
                          (define final-lift-start (prefix-lift-start final-prefix))
-                         (+ (- lift-start n) final-lift-start lift-offset)]
-                        [else (+ n toplevel-offset)])) 
+                         (+ (- n lift-start) final-lift-start lift-offset)]
+                        [else (vector-ref rewriter n)])) 
                     (lambda (n) n) 0))
                 (append (forms final-prefix) (map update s-forms)))
               (max max-let-depth s-max-let-depth)
               (+ toplevel-offset (length (prefix-toplevels s-prefix)))
               (+ lift-offset (prefix-num-lifts s-prefix)))))
-  (log-debug "syntax-bodies: ~a" syntax-bodies)
+  (local-require racket/pretty)
+  (log-debug "syntax-bodies: ~a" (pretty-format syntax-bodies))
   (values prefix (forms prefix) max-let-depth))
 
 (define (nodep-module mod-form phase)
@@ -200,7 +216,9 @@
            (define syntax-bodies@phase (assoc (- phase) syntax-bodies))
            (cond 
              [syntax-bodies@phase 
-               (nodep-syntax-bodies syntax-bodies@phase)]
+               (define-values (new-prefix new-body new-max-let-depth) (nodep-syntax-bodies syntax-bodies@phase))
+               (log-debug "[~S] new-prefix: ~a new-body: ~a" name new-prefix new-body)
+               (values new-prefix new-body new-max-let-depth)]
              [else 
                (values prefix body max-let-depth)])]))
      (define new-prefix prefix*)
