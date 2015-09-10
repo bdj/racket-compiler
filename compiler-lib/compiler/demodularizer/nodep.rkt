@@ -151,7 +151,7 @@
     [root-prefix
       (match-define (struct prefix (root-num-lifts root-toplevels root-stxs root-src-insp-desc)) root-prefix)
       (match-define (struct prefix (mod-num-lifts mod-toplevels mod-stxs src-insp-desc)) mod-prefix)
-
+      ; TODO: this is slow
       (define combined-toplevels 
         (append root-toplevels (filter (lambda (x) (not (member x root-toplevels))) mod-toplevels)))
       
@@ -194,7 +194,8 @@
                         [else (vector-ref rewriter n)])) 
                     (lambda (n) n) 0))
                 (log-debug "s-forms: ~a" s-forms)
-                (append (forms final-prefix) (if (zero?  (vector-length rewriter)) empty (map update s-forms))))
+                (append (forms final-prefix) 
+                        (if (zero? (vector-length rewriter)) empty (map update s-forms))))
               (max max-let-depth s-max-let-depth)
               (+ toplevel-offset (length (prefix-toplevels s-prefix)))
               (+ lift-offset (prefix-num-lifts s-prefix)))))
