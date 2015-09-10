@@ -193,12 +193,11 @@
                          (+ (- n lift-start) final-lift-start lift-offset)]
                         [else (vector-ref rewriter n)])) 
                     (lambda (n) n) 0))
-                (append (forms final-prefix) (map update s-forms)))
+                (log-debug "s-forms: ~a" s-forms)
+                (append (forms final-prefix) (if (zero?  (vector-length rewriter)) empty (map update s-forms))))
               (max max-let-depth s-max-let-depth)
               (+ toplevel-offset (length (prefix-toplevels s-prefix)))
               (+ lift-offset (prefix-num-lifts s-prefix)))))
-  (local-require racket/pretty)
-  (log-debug "syntax-bodies: ~a" (pretty-format syntax-bodies))
   (values prefix (forms prefix) max-let-depth))
 
 (define (nodep-module mod-form phase)
@@ -222,6 +221,11 @@
              [else 
                (values prefix body max-let-depth)])]))
      (define new-prefix prefix*)
+     (cond 
+       [new-prefix
+         
+         
+       
      ;; Cache all the mpi paths
      (for-each (match-lambda
                  [(and mv (struct module-variable (modidx sym pos phase constantness)))
@@ -248,7 +252,11 @@
                          (begin (log-debug (format "[~S] lang-info : ~S @ ~S" name lang-info phase)) ; XXX Seems to always be #f now
                                 (list m))
                          (begin (log-debug (format "[~S] Dropping module @ ~S" name phase))
-                                empty))))]              
+                                empty))))]
+       [else 
+        (values #f #f (requires->modlist requires phase)) 
+         ]
+       )]              
     [else (error 'nodep-module "huh?: ~e" mod-form)]))
 
 (define (+* l r)
