@@ -171,8 +171,8 @@
     [else (values mod-prefix (build-vector (length (prefix-toplevels mod-prefix)) values))]))
 
 (define (nodep-syntax-bodies syntax-bodies)
-  (define-values (prefix forms max-let-depth toplevel-offset lift-offset)
-    (for/fold ([prefix #f]
+  (define-values (a-prefix forms max-let-depth toplevel-offset lift-offset)
+    (for/fold ([a-prefix #f]
                [forms (lambda (prefix) empty)]
                [max-let-depth -1]
                [toplevel-offset 0]
@@ -180,7 +180,7 @@
               ([body syntax-bodies]
                #:when (seq-for-syntax? body))
       (match-define (seq-for-syntax s-forms s-prefix s-max-let-depth s-dummy) body)
-      (define-values (merged-prefix rewriter) (merge-prefix prefix s-prefix))
+      (define-values (merged-prefix rewriter) (merge-prefix a-prefix s-prefix))
       (values merged-prefix 
               (lambda (final-prefix)
                 (define update 
@@ -199,7 +199,28 @@
               (max max-let-depth s-max-let-depth)
               (+ toplevel-offset (length (prefix-toplevels s-prefix)))
               (+ lift-offset (prefix-num-lifts s-prefix)))))
-  (values prefix (forms prefix) max-let-depth))
+
+  ;; trace through merged prefix and find the bulk-bindings all-from-module stuff
+  (values a-prefix (forms a-prefix) max-let-depth))
+
+(define (delete-bulk-bindings expr)
+  (match expr
+    [(prefix num-lifts toplevels stxs src-inspector-desc)
+     (prefix num-lifts toplevels (delete-bulk-bindings stxs) src-inspector-desc)]
+    [(stx content) (stx (delete-bulk-bindings content))]
+    [(stx-obj datum wrap srcloc props tamper-status)
+     (stx-obj datum (delete-bulk-bindings wrap) srcloc props tamper-status)]
+    [(wrap shifts simple-scopes multi-scopes)
+     (wrap shifts (delete-bulk-bindings simple-scopes) (delete-bulk-bindings multi-scopes))]
+    [(scope name kind bindings bulk-bindings multi-owner)
+     (scope name kind bindings empty multi-owner)]
+    [(multi-scope name src-name scopes)
+     (multi-scope name src-name (delete-bulk-bindings scopes))]
+    [(list exprs ...) (map delete-bulk-bindings exprs)]
+    [(? exact-integer? i) i]
+    [#f #f]
+    [e (error 'delete-bulk-bindings "unexpected form: ~a\n" e)]))
+
 
 (define (nodep-module mod-form phase)
   (match mod-form
@@ -221,12 +242,9 @@
                (values new-prefix new-body new-max-let-depth)]
              [else 
                (values prefix body max-let-depth)])]))
-     (define new-prefix prefix*)
+     (define new-prefix (delete-bulk-bindings prefix*))
      (cond 
        [new-prefix
-         
-         
-       
      ;; Cache all the mpi paths
      (for-each (match-lambda
                  [(and mv (struct module-variable (modidx sym pos phase constantness)))

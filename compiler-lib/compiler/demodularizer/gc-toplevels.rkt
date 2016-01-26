@@ -31,7 +31,8 @@
         (for/list ([i normal-tls])
           (list-ref (prefix-toplevels top-prefix) i))
         (for/list ([i ordered-stxs])
-          (list-ref (prefix-stxs top-prefix) i))))
+          (list-ref (prefix-stxs top-prefix) i))
+        (prefix-src-inspector-desc top-prefix)))
      (define new-lift-start
        (prefix-lift-start new-prefix))
      ; XXX This probably breaks max-let-depth
@@ -261,6 +262,11 @@
         (update key)
         (update val)
         (update body))]
+      [(struct with-immed-mark (key val body))
+       (make-with-immed-mark
+        (update key)
+        (update val)
+        (update body))]
       [(struct beg0 (seq))
        (make-beg0 (map update seq))]
       [(struct varref (tl dummy))
@@ -279,6 +285,7 @@
        f]
       [(and v (not (? form?)))
        v]
+      [x (printf "GOT AN UNKNOWN ~a\n" x)]
       ))
   (define-values (first-update update)
     (build-form-memo inner-update))
